@@ -1,7 +1,6 @@
 import React from "react";
 import { CircleCheck, ChevronDown, Gauge, ListTodo, Plus, Search, X } from "lucide-react";
 
-// Hàm hỗ trợ tính khoảng ngày (DD/MM - DD/MM) cho từng tuần dựa trên ngày bắt đầu và kết thúc của dự án
 const getWeekDateRange = (projectStartDate, projectEndDate, weekNum) => {
     if (!projectStartDate) return '';
     const start = new Date(projectStartDate);
@@ -13,7 +12,6 @@ const getWeekDateRange = (projectStartDate, projectEndDate, weekNum) => {
     let weekEnd = new Date(weekStart);
     weekEnd.setDate(weekStart.getDate() + 6);
 
-    // Nếu tuần vượt quá ngày kết thúc của dự án thì giới hạn lại bằng đúng ngày endDate
     if (projectEndDate) {
         const projEnd = new Date(projectEndDate);
         if (!isNaN(projEnd.getTime()) && weekEnd > projEnd) {
@@ -27,11 +25,6 @@ const getWeekDateRange = (projectStartDate, projectEndDate, weekNum) => {
     return `${formatShort(weekStart)} - ${formatShort(weekEnd)}`;
 };
 
-/**
- - Board toolbar: search + week filter (the two filters the board already had), active-filter chips
- - and the "Add task" action. Purely presentational — the page owns the filter state and logic.
- - `summary` ({ tasks, points, completed }) is the project context shown next to the action.
- */
 function BoardToolbar({
                           summary,
                           searchQuery,
@@ -48,7 +41,6 @@ function BoardToolbar({
     const weekActive = selectedWeek !== "all";
     const hasFilters = Boolean(trimmedQuery) || weekActive;
 
-    // Lấy chuỗi ngày cho tuần đang được chọn (để hiển thị trên chip filter)
     const activeWeekRange = weekActive ? getWeekDateRange(projectStartDate, projectEndDate, selectedWeek) : '';
 
     return (
@@ -91,7 +83,7 @@ function BoardToolbar({
                 {summary && (
                     <ul className="board-summary" aria-label="Board summary">
                         <li title="Tasks on the board"><ListTodo className="icon icon-xs" aria-hidden="true" />{summary.tasks} {summary.tasks === 1 ? "task" : "tasks"}</li>
-                        <li title="Story points on the board"><Gauge className="icon icon-xs" aria-hidden="true" />{summary.points} est</li>
+                        <li title="Estimate time on the board"><Gauge className="icon icon-xs" aria-hidden="true" />{summary.points} est</li>
                         <li title="Completed tasks"><CircleCheck className="icon icon-xs" aria-hidden="true" />{summary.completed} completed</li>
                     </ul>
                 )}

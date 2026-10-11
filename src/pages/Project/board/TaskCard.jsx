@@ -4,32 +4,11 @@ import { checklistProgress } from "../../../utils/checklist.js";
 
 const MAX_AVATARS = 3;
 
-// Only abnormal deadline states get a visual signal ("On Track" shows nothing — DEC-002)
 const DEADLINE_SIGNAL = {
     Overdue: { className: "is-overdue", Icon: CircleAlert, tooltip: "The project due date has passed" },
     Expiring: { className: "is-expiring", Icon: Clock, tooltip: "This week ends soon" },
 };
 
-/**
- * Kanban task card — presentation only. The parent (ProjectBoard) owns the Draggable, permissions,
- * week/deadline calculation, assignee lookup and every handler; this component only lays them out.
- *
- * @param {object}   task            task as loaded (title/name, description, priority, checklist)
- * @param {Function} dragRef         Draggable `provided.innerRef`            ┐
- * @param {object}   draggableProps  Draggable `provided.draggableProps` (+style) │ applied as-is to the root —
- * @param {object}   dragHandleProps Draggable `provided.dragHandleProps` (null    │ the whole card is the drag handle
- *                                   when dragging is disabled)                  ┘
- * @param {boolean}  isDragging      Draggable `snapshot.isDragging`
- * @param {boolean}  canDrag         whether the current user may drag this task
- * @param {number}   week            display week (calculated by the parent)
- * @param {number}   points          story points
- * @param {string}   deadlineStatus  'Overdue' | 'Expiring' | 'On Track' (calculated by the parent)
- * @param {Array}    assignees       [{ id, name, initials }]
- * @param {Function} onOpen          open the task drawer
- * @param {Function} [onNotAccept]   leader/manager "Not accept" action; omit to hide the button
- *
- * "Completed" comes from the backend task.status (set by PUT /task/:id/move), never from the column name.
- */
 function TaskCard({ task, dragRef, draggableProps, dragHandleProps, isDragging, canDrag, week, points, deadlineStatus, assignees, onOpen, onNotAccept }) {
     const title = task.title || task.name;
     const priority = task.priority || "Medium";
@@ -38,14 +17,12 @@ function TaskCard({ task, dragRef, draggableProps, dragHandleProps, isDragging, 
     const checklistDone = checklist.filter((item) => item.completed).length;
     const progress = checklistProgress(checklist);
     const completed = task.status === "completed";
-    // a finished task is not late: no deadline warning on it
     const signal = completed ? undefined : DEADLINE_SIGNAL[deadlineStatus];
     const shownAssignees = assignees.slice(0, MAX_AVATARS);
     const hiddenAssignees = assignees.length - shownAssignees.length;
 
-    // Enter always opens; Space opens only when dnd does not own it (locked card — Space lifts a draggable card)
     const handleKeyDown = (e) => {
-        if (e.target !== e.currentTarget) return; // keys on inner buttons are theirs
+        if (e.target !== e.currentTarget) return;
         if (e.key === "Enter" || (!canDrag && e.key === " ")) {
             e.preventDefault();
             onOpen();
@@ -57,7 +34,7 @@ function TaskCard({ task, dragRef, draggableProps, dragHandleProps, isDragging, 
         completed && "Completed",
         `Priority ${priority}`,
         `Week ${week}`,
-        `${points} points`,
+        `${points} estimate time`,
         checklist.length > 0 && `Checklist ${checklistDone} of ${checklist.length}`,
         signal && deadlineStatus,
     ].filter(Boolean).join(". ");
@@ -72,7 +49,6 @@ function TaskCard({ task, dragRef, draggableProps, dragHandleProps, isDragging, 
             ref={dragRef}
             {...draggableProps}
             {...dragHandleProps}
-            // a locked card has no drag handle props, so it needs its own keyboard semantics
             role={dragHandleProps ? dragHandleProps.role : "button"}
             tabIndex={dragHandleProps ? dragHandleProps.tabIndex : 0}
             aria-label={accessibleName}
@@ -97,7 +73,7 @@ function TaskCard({ task, dragRef, draggableProps, dragHandleProps, isDragging, 
                 <li title="Week">
                     <CalendarDays className="icon icon-xs" />W{week}
                 </li>
-                <li title="Story points">
+                <li title="Estimate time">
                     <Gauge className="icon icon-xs" />{points} est
                 </li>
                 {checklist.length > 0 && (

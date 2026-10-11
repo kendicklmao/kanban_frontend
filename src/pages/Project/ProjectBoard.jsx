@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
-// Import socket instance từ file socket.js của bạn
-import {socket} from './../../utils/socket.js';
+import { socket } from './../../utils/socket.js';
 import {
     fetchProjectById,
     fetchTasksByProject,
@@ -26,12 +25,7 @@ import ErrorState from '../../components/common/ErrorState.jsx';
 import { useConfirm, deleteConfirm } from '../../components/common/confirmContext.js';
 import Modal from '../../components/common/Modal.jsx';
 import { withFallback, failureMessage } from '../../utils/requestState.js';
-import {
-    Plus,
-    Loader2,
-    Check,
-    CalendarClock
-} from "lucide-react";
+import { Plus, Loader2, CalendarClock } from "lucide-react";
 
 import ProjectHeader from '../../components/project/ProjectHeader.jsx';
 import { applyMoveToColumns, buildMovePayload, getDestinationIndex, mergeMovedTask, idOf } from '../../utils/taskMove.js';
@@ -55,7 +49,16 @@ const formatDateDMY = (dateValue) => {
     return `${day}/${month}/${year}`;
 };
 
-// Hàm tính ngày bắt đầu và kết thúc của Week `weekNum` dựa trên ngày bắt đầu và ngày kết thúc của dự án
+// Helper chuẩn hóa giá trị estimate time
+const extractEstimateTime = (task, fallback = 0) => {
+    if (!task) return fallback;
+    const val = task.estimateTime ?? task.estimate_time ?? task.point ?? task.points;
+    if (val === undefined || val === null || val === '') return fallback;
+    const num = Number(val);
+    return isNaN(num) ? fallback : num;
+};
+
+// Hàm tính ngày bắt đầu và kết thúc của Week `weekNum`
 const getWeekDateRange = (projectStartDate, projectEndDate, weekNum) => {
     if (!projectStartDate) return '';
     const start = new Date(projectStartDate);
@@ -67,7 +70,6 @@ const getWeekDateRange = (projectStartDate, projectEndDate, weekNum) => {
     let weekEnd = new Date(weekStart);
     weekEnd.setDate(weekStart.getDate() + 6);
 
-    // Nếu vượt quá ngày kết thúc dự án thì giới hạn lại đúng ngày endDate
     if (projectEndDate) {
         const projEnd = new Date(projectEndDate);
         if (!isNaN(projEnd.getTime()) && weekEnd > projEnd) {
@@ -81,7 +83,6 @@ const getWeekDateRange = (projectStartDate, projectEndDate, weekNum) => {
     return `${formatShort(weekStart)} - ${formatShort(weekEnd)}`;
 };
 
-// Hàm hỗ trợ lấy 2 chữ cái đầu viết hoa
 const getInitials = (name) => {
     if (!name) return '??';
     const words = String(name).trim().split(/\s+/);
@@ -91,7 +92,6 @@ const getInitials = (name) => {
     return (words[0][0] + words[words.length - 1][0]).toUpperCase();
 };
 
-// Helper trích xuất User ID từ record Member
 const extractUserId = (member) => {
     if (!member) return '';
     if (typeof member.userId === 'object') {
@@ -101,9 +101,7 @@ const extractUserId = (member) => {
     return String(member._id || member.id || '');
 };
 
-const getMemberUserId = (member) => {
-    return extractUserId(member);
-};
+const getMemberUserId = (member) => extractUserId(member);
 
 const getMemberDisplayName = (member) => {
     if (!member) return 'User';
@@ -153,29 +151,42 @@ const extractColumnId = (columnId) => {
     return String(columnId);
 };
 
-// Hàm tính tuần hiện tại của Project dựa trên startDate và ngày hôm nay
 const calculateCurrentProjectWeek = (project, totalWeeks) => {
     const start = project?.startDate || project?.createdDate || project?.createdAt;
     if (!start) return 1;
 
-    const startDateObj = new Date(start);
-    startDateObj.setHours(0, 0, 0, 0);
+    let startYear, startMonth, startDateNum;
+    if (typeof start === "string") {
+        const parts = start.split("T")[0].split("-");
+        if (parts.length === 3) {
+            startYear = parseInt(parts[0], 10);
+            startMonth = parseInt(parts[1], 10) - 1;
+            startDateNum = parseInt(parts[2], 10);
+        }
+    }
+
+    let startDateObj;
+    if (startYear !== undefined && !isNaN(startYear)) {
+        startDateObj = new Date(startYear, startMonth, startDateNum);
+    } else {
+        startDateObj = new Date(start);
+    }
+
+    if (isNaN(startDateObj.getTime())) return 1;
 
     const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const startMidnight = new Date(startDateObj.getFullYear(), startDateObj.getMonth(), startDateObj.getDate()).getTime();
+    const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
 
-    const diffTime = today.getTime() - startDateObj.getTime();
-    const diffDays = Math.floor(diffTime / (1000 * 3600 * 24));
-
-    if (diffDays < 0) return 1; // Chưa tới ngày bắt đầu
+    const diffDays = Math.round((todayMidnight - startMidnight) / (1000 * 3600 * 24));
+    if (diffDays < 0) return 1;
 
     const calculatedWeek = Math.floor(diffDays / 7) + 1;
     return Math.min(Math.max(calculatedWeek, 1), totalWeeks || 1);
 };
 
-// Hàm tính toán Week thực tế và trả về trạng thái On Track / Expiring / Overdue
 const calculateTaskWeekAndStatus = (task, project) => {
-    let currentWeek = Number(task?.week) || 1;
+    const currentWeek = Number(task?.week) || 1;
 
     const projStart = project?.startDate || project?.createdDate || project?.createdAt;
     const projEnd = project?.date || project?.dueDate || project?.endDate;
@@ -184,42 +195,14 @@ const calculateTaskWeekAndStatus = (task, project) => {
         return { displayWeek: currentWeek, status: 'On Track' };
     }
 
-    const startDate = new Date(projStart);
-    startDate.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
     const endDate = projEnd ? new Date(projEnd) : null;
     if (endDate) endDate.setHours(0, 0, 0, 0);
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
     if (endDate && today > endDate) {
         return { displayWeek: currentWeek, status: 'Overdue' };
-    }
-
-    const diffTime = today.getTime() - startDate.getTime();
-    const diffDays = Math.floor(diffTime / (1000 * 3600 * 24));
-
-    if (diffDays >= 0) {
-        const calculatedWeek = Math.floor(diffDays / 7) + 1;
-        currentWeek = Math.max(currentWeek, calculatedWeek);
-    }
-
-    const weekStart = new Date(startDate);
-    weekStart.setDate(weekStart.getDate() + (currentWeek - 1) * 7);
-
-    let weekEnd = new Date(weekStart);
-    weekEnd.setDate(weekEnd.getDate() + 6);
-
-    if (endDate && weekEnd > endDate) {
-        weekEnd = new Date(endDate);
-    }
-
-    const expiringThreshold = new Date(weekEnd);
-    expiringThreshold.setDate(expiringThreshold.getDate() - 1);
-
-    if (today >= expiringThreshold && today <= weekEnd) {
-        return { displayWeek: currentWeek, status: 'Expiring' };
     }
 
     return { displayWeek: currentWeek, status: 'On Track' };
@@ -256,7 +239,6 @@ function TaskDrawer({
     const [activities, setActivities] = useState([]);
     const [activitiesError, setActivitiesError] = useState('');
     const dirtyFieldsRef = useRef(new Set());
-    const checklistTouched = useRef(false);
 
     const canEditAll = isManager;
     const canEditManagement = isManager || isLeader;
@@ -266,26 +248,46 @@ function TaskDrawer({
     const canAddChecklist = isManager || isLeader;
     const canDeleteChecklist = isManager || isLeader;
 
-    const normalizeTask = (realTask) => ({
-        ...realTask,
-        name: realTask.name || realTask.title || '',
-        columnId: extractColumnId(realTask.columnId),
-        assignees: Array.isArray(realTask.assignees)
-            ? realTask.assignees.map(a => typeof a === 'object' ? String(a._id || a.id) : String(a))
-            : [],
-        estimateTime: realTask.estimateTime ?? realTask.estimate_time ?? 0,
-        week: realTask.week ?? 1
-    });
+    const normalizeTask = (realTask) => {
+        const est = extractEstimateTime(realTask, 0);
+        return {
+            ...realTask,
+            name: realTask.name || realTask.title || '',
+            columnId: extractColumnId(realTask.columnId),
+            assignees: Array.isArray(realTask.assignees)
+                ? realTask.assignees.map(a => typeof a === 'object' ? String(a._id || a.id) : String(a))
+                : [],
+            estimateTime: est,
+            estimate_time: est,
+            point: est,
+            points: est,
+            week: realTask.week ?? 1
+        };
+    };
 
-    const loadActivities = () => fetchTaskActivities(taskId)
-        .then((data) => { setActivities(Array.isArray(data) ? data : (data?.data || [])); setActivitiesError(''); })
-        .catch((err) => setActivitiesError(failureMessage({ error: err })));
-    const loadComments = () => fetchTaskComments(taskId)
-        .then((data) => { setComments(Array.isArray(data) ? data : (data?.data || [])); setCommentsError(''); })
-        .catch((err) => setCommentsError(failureMessage({ error: err })));
+    const safeNotifyParent = (updatedTask) => {
+        if (!onTaskUpdated) return;
+        Promise.resolve().then(() => {
+            onTaskUpdated(updatedTask);
+        });
+    };
+
+    const loadActivities = () => {
+        if (!taskId || taskId === 'null' || taskId === 'undefined') return;
+        fetchTaskActivities(taskId)
+            .then((data) => { setActivities(Array.isArray(data) ? data : (data?.data || [])); setActivitiesError(''); })
+            .catch((err) => setActivitiesError(failureMessage({ error: err })));
+    };
+
+    const loadComments = () => {
+        if (!taskId || taskId === 'null' || taskId === 'undefined') return;
+        fetchTaskComments(taskId)
+            .then((data) => { setComments(Array.isArray(data) ? data : (data?.data || [])); setCommentsError(''); })
+            .catch((err) => setCommentsError(failureMessage({ error: err })));
+    };
 
     useEffect(() => {
-        if (!isDrawerOpen || !taskId) return;
+        if (!isDrawerOpen || !taskId || taskId === 'null' || taskId === 'undefined') return;
         let cancelled = false;
         setLoading(true);
         setLoadError('');
@@ -337,10 +339,12 @@ function TaskDrawer({
             updatedFields.columnId = extractColumnId(updatedFields.columnId);
         }
 
-        if (updatedFields.estimateTime !== undefined || updatedFields.estimate_time !== undefined) {
-            const val = Number(updatedFields.estimateTime ?? updatedFields.estimate_time) || 0;
+        if (updatedFields.estimateTime !== undefined || updatedFields.estimate_time !== undefined || updatedFields.point !== undefined || updatedFields.points !== undefined) {
+            const val = extractEstimateTime(updatedFields, extractEstimateTime(task, 0));
             updatedFields.estimateTime = val;
             updatedFields.estimate_time = val;
+            updatedFields.point = val;
+            updatedFields.points = val;
         }
 
         if (updatedFields.week !== undefined) {
@@ -352,7 +356,6 @@ function TaskDrawer({
 
         setTask(updatedTaskLocal);
         setSaveError('');
-        if (onTaskUpdated) onTaskUpdated(updatedTaskLocal);
 
         try {
             setIsSaving(true);
@@ -360,23 +363,26 @@ function TaskDrawer({
             const returnedTask = updatedData?.data || updatedData;
             Object.keys(updatedFields).forEach((f) => dirtyFieldsRef.current.delete(f));
 
-            if (returnedTask) {
-                const finalTask = {
-                    ...updatedTaskLocal,
-                    ...normalizeTask(returnedTask),
-                    columnId: extractColumnId(returnedTask.columnId) || updatedTaskLocal.columnId,
-                    estimateTime: returnedTask.estimateTime ?? returnedTask.estimate_time ?? updatedTaskLocal.estimateTime,
-                    week: returnedTask.week ?? updatedTaskLocal.week
-                };
-                setTask(finalTask);
-                if (onTaskUpdated) onTaskUpdated(finalTask);
-            }
+            const finalEst = extractEstimateTime(returnedTask, extractEstimateTime(updatedTaskLocal, 0));
+            const finalTask = {
+                ...updatedTaskLocal,
+                ...(returnedTask ? normalizeTask(returnedTask) : {}),
+                estimateTime: finalEst,
+                estimate_time: finalEst,
+                point: finalEst,
+                points: finalEst,
+                columnId: extractColumnId(returnedTask?.columnId) || updatedTaskLocal.columnId,
+                week: returnedTask?.week ?? updatedTaskLocal.week
+            };
+
+            setTask(finalTask);
+            safeNotifyParent(finalTask);
             loadActivities();
         } catch (error) {
             console.error("Lỗi khi cập nhật task, đang hoàn tác:", error);
             setTask(previousTask);
             setSaveError(`Couldn't save changes — ${error.message}`);
-            if (onTaskUpdated) onTaskUpdated(previousTask);
+            safeNotifyParent(previousTask);
         } finally {
             setIsSaving(false);
         }
@@ -390,7 +396,9 @@ function TaskDrawer({
         setIsSaving(true);
         try {
             const moved = await onMoveTask(taskId, sourceColumnId, destColumnId);
-            setTask(prev => prev ? normalizeTask({ ...prev, ...moved, assignees: prev.assignees }) : prev);
+            Promise.resolve().then(() => {
+                setTask(prev => prev ? normalizeTask({ ...prev, ...moved, assignees: prev.assignees }) : prev);
+            });
             loadActivities();
         } catch (error) {
             setSaveError(`Couldn't move the task — ${error.message}`);
@@ -402,15 +410,15 @@ function TaskDrawer({
     const handleInputChange = (field, value) => {
         const updatedFields = { [field]: value };
         if (field === 'estimateTime' || field === 'estimate_time') {
-            updatedFields.estimateTime = value;
-            updatedFields.estimate_time = value;
+            // Cho phép lưu giá trị dạng chuỗi rỗng '' để người dùng dễ xóa số 0
+            const val = value === '' ? '' : Number(value);
+            updatedFields.estimateTime = val;
+            updatedFields.estimate_time = val;
+            updatedFields.point = val;
+            updatedFields.points = val;
         }
         Object.keys(updatedFields).forEach((f) => dirtyFieldsRef.current.add(f));
-        setTask(prev => {
-            const nextState = { ...prev, ...updatedFields };
-            if (onTaskUpdated) onTaskUpdated(nextState);
-            return nextState;
-        });
+        setTask(prev => ({ ...prev, ...updatedFields }));
     };
 
     const handleToggleAssignee = (member) => {
@@ -460,33 +468,28 @@ function TaskDrawer({
 
     const handleAddChecklist = async (text) => {
         if (!canAddChecklist || !text.trim()) return;
-        checklistTouched.current = true;
         const response = await addChecklistItem(taskId, text.trim());
         const realTask = response?.data || response;
         if (realTask && realTask.checklist) {
-            setTask(prev => ({ ...prev, checklist: realTask.checklist }));
+            const nextTask = { ...task, checklist: realTask.checklist };
+            setTask(nextTask);
+            safeNotifyParent(nextTask);
         }
         loadActivities();
     };
 
-    useEffect(() => {
-        if (!checklistTouched.current || !task || !onTaskUpdated) return;
-        checklistTouched.current = false;
-        onTaskUpdated({ ...task });
-    }, [task?.checklist]);
-
     const handleToggleChecklist = async (item) => {
-        checklistTouched.current = true;
         const previousChecklist = task.checklist;
-        setTask(prev => ({
-            ...prev,
-            checklist: (prev.checklist || []).map(i => String(i._id) === String(item._id) ? { ...i, completed: !item.completed } : i)
-        }));
+        const updatedChecklist = (task.checklist || []).map(i => String(i._id) === String(item._id) ? { ...i, completed: !item.completed } : i);
+        setTask(prev => ({ ...prev, checklist: updatedChecklist }));
+
         try {
             const response = await toggleChecklistItem(taskId, item._id, item.completed);
             const realTask = response?.data || response;
             if (realTask && realTask.checklist) {
-                setTask(prev => ({ ...prev, checklist: realTask.checklist }));
+                const nextTask = { ...task, checklist: realTask.checklist };
+                setTask(nextTask);
+                safeNotifyParent(nextTask);
             }
             loadActivities();
         } catch (error) {
@@ -503,9 +506,10 @@ function TaskDrawer({
             item: "checklist",
             name: item.text,
             onConfirm: async () => {
-                checklistTouched.current = true;
                 const previousChecklist = task.checklist;
-                setTask(prev => ({ ...prev, checklist: (prev.checklist || []).filter(i => String(i._id) !== String(item._id)) }));
+                const nextTask = { ...task, checklist: (task.checklist || []).filter(i => String(i._id) !== String(item._id)) };
+                setTask(nextTask);
+                safeNotifyParent(nextTask);
 
                 try {
                     await deleteChecklist(item._id);
@@ -621,10 +625,10 @@ function TaskDrawer({
                                     className="input"
                                     type="number"
                                     min="0"
-                                    value={task.estimateTime ?? task.estimate_time ?? 0}
+                                    value={task.estimateTime ?? task.estimate_time ?? ''}
                                     disabled={!canEditAll}
                                     onChange={(e) => handleInputChange('estimateTime', e.target.value)}
-                                    onBlur={(e) => handleUpdateTaskField({ estimateTime: Number(e.target.value) || 0, estimate_time: Number(e.target.value) || 0 })}
+                                    onBlur={(e) => canEditAll && handleUpdateTaskField({ estimateTime: Number(e.target.value) || 0 })}
                                 />
                             </label>
                             <label className="drawer-field">
@@ -728,7 +732,6 @@ export default function ProjectBoard({ projectId: propProjectId }) {
     const [loadFailures, setLoadFailures] = useState([]);
 
     const [searchQuery, setSearchQuery] = useState('');
-    // Khởi tạo selectedWeek mặc định (sau đó sẽ tự động update về tuần hiện tại của project)
     const [selectedWeek, setSelectedWeek] = useState('1');
 
     const [activeModal, setActiveModal] = useState(null);
@@ -744,7 +747,7 @@ export default function ProjectBoard({ projectId: propProjectId }) {
     const [newTaskName, setNewTaskName] = useState('');
     const [newTaskColumnId, setNewTaskColumnId] = useState('');
     const [newTaskPriority, setNewTaskPriority] = useState('Medium');
-    const [newTaskEstimateTime, setNewTaskEstimateTime] = useState(0);
+    const [newTaskEstimateTime, setNewTaskEstimateTime] = useState('');
     const [newTaskWeek, setNewTaskWeek] = useState(1);
     const [newTaskDesc, setNewTaskDesc] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -816,12 +819,23 @@ export default function ProjectBoard({ projectId: propProjectId }) {
 
             const realProject = projectData?.data || projectData || {};
             const realColumns = Array.isArray(columnsData) ? columnsData : (columnsData?.data || []);
-            const realTasks = Array.isArray(tasksData) ? tasksData : (tasksData?.data || []);
+            const rawTasks = Array.isArray(tasksData) ? tasksData : (tasksData?.data || []);
             const realMembers = Array.isArray(membersData)
                 ? membersData
                 : (membersData?.data || membersData?.members || []);
 
             realColumns.sort((a, b) => (a.position || 0) - (b.position || 0));
+
+            const realTasks = rawTasks.map(t => {
+                const est = extractEstimateTime(t, 0);
+                return {
+                    ...t,
+                    estimateTime: est,
+                    estimate_time: est,
+                    point: est,
+                    points: est
+                };
+            });
 
             setProject(realProject);
             setColumns(realColumns);
@@ -855,11 +869,16 @@ export default function ProjectBoard({ projectId: propProjectId }) {
                 const exists = prevTasks.some(t => String(t._id || t.id) === taskId);
                 if (exists) return prevTasks;
 
+                const est = extractEstimateTime(taskData, 0);
+
                 const formattedTask = {
                     ...taskData,
                     _id: taskId,
                     columnId: extractColumnId(taskData.columnId),
-                    estimateTime: taskData.estimateTime ?? taskData.estimate_time ?? 0,
+                    estimateTime: est,
+                    estimate_time: est,
+                    point: est,
+                    points: est,
                     week: taskData.week ?? 1
                 };
                 return [...prevTasks, formattedTask];
@@ -877,12 +896,16 @@ export default function ProjectBoard({ projectId: propProjectId }) {
             setTasks(prevTasks =>
                 prevTasks.map(t => {
                     if (String(t._id || t.id) === taskId) {
+                        const est = extractEstimateTime(taskData, extractEstimateTime(t, 0));
                         return {
                             ...t,
                             ...taskData,
                             _id: taskId,
                             columnId: extractColumnId(taskData.columnId || t.columnId),
-                            estimateTime: taskData.estimateTime ?? taskData.estimate_time ?? t.estimateTime,
+                            estimateTime: est,
+                            estimate_time: est,
+                            point: est,
+                            points: est,
                             week: taskData.week ?? t.week
                         };
                     }
@@ -955,7 +978,6 @@ export default function ProjectBoard({ projectId: propProjectId }) {
         return Math.ceil(diffDays / 7);
     }, [project]);
 
-    // Tự động set filter tuần về WEEK HIỆN TẠI của project khi vừa nạp thông tin project xong
     useEffect(() => {
         if (project) {
             const currentWeek = calculateCurrentProjectWeek(project, totalProjectWeeks);
@@ -969,13 +991,12 @@ export default function ProjectBoard({ projectId: propProjectId }) {
             const title = (task.title || task.name || '').toLowerCase();
             const matchesQuery = !query || title.includes(query);
 
-            const { displayWeek } = calculateTaskWeekAndStatus(task, project);
-            // Nếu selectedWeek là 'all' thì hiển thị tất cả, ngược lại lọc theo tuần
-            const matchesWeek = selectedWeek === 'all' || displayWeek === Number(selectedWeek);
+            const taskWeek = Number(task.week) || 1;
+            const matchesWeek = selectedWeek === 'all' || taskWeek === Number(selectedWeek);
 
             return matchesQuery && matchesWeek;
         });
-    }, [tasks, searchQuery, selectedWeek, project]);
+    }, [tasks, searchQuery, selectedWeek]);
 
     const getSortedTasksForColumn = (column) => {
         const columnTaskMap = new Map();
@@ -1008,7 +1029,7 @@ export default function ProjectBoard({ projectId: propProjectId }) {
         setNewTaskName('');
         setNewTaskDesc('');
         setNewTaskPriority('Medium');
-        setNewTaskEstimateTime(0);
+        setNewTaskEstimateTime('');
         setNewTaskWeek(1);
     };
 
@@ -1029,10 +1050,21 @@ export default function ProjectBoard({ projectId: propProjectId }) {
 
     const handleTaskUpdatedFromDrawer = (updatedTask) => {
         setTasks(prevTasks =>
-            prevTasks.map(t => String(t._id || t.id) === String(updatedTask._id || updatedTask.id)
-                ? { ...t, ...updatedTask, columnId: extractColumnId(updatedTask.columnId) }
-                : t
-            )
+            prevTasks.map(t => {
+                if (String(t._id || t.id) === String(updatedTask._id || updatedTask.id)) {
+                    const est = extractEstimateTime(updatedTask, extractEstimateTime(t, 0));
+                    return {
+                        ...t,
+                        ...updatedTask,
+                        columnId: extractColumnId(updatedTask.columnId),
+                        estimateTime: est,
+                        estimate_time: est,
+                        point: est,
+                        points: est
+                    };
+                }
+                return t;
+            })
         );
     };
 
@@ -1131,7 +1163,7 @@ export default function ProjectBoard({ projectId: propProjectId }) {
 
         try {
             setIsSubmitting(true);
-            const estimateTimeValue = Number(newTaskEstimateTime) || 0;
+            const estimateTimeValue = newTaskEstimateTime === '' ? 0 : Number(newTaskEstimateTime) || 0;
             const weekValue = Number(newTaskWeek) || 1;
 
             const payload = {
@@ -1143,6 +1175,8 @@ export default function ProjectBoard({ projectId: propProjectId }) {
                 priority: newTaskPriority,
                 estimateTime: estimateTimeValue,
                 estimate_time: estimateTimeValue,
+                point: estimateTimeValue,
+                points: estimateTimeValue,
                 week: weekValue,
                 assignees: [],
                 members: []
@@ -1151,14 +1185,18 @@ export default function ProjectBoard({ projectId: propProjectId }) {
             const response = await createTask(payload);
             const createdTask = response?.data || response;
 
+            const finalEst = extractEstimateTime(createdTask, estimateTimeValue);
+
             const formattedNewTask = {
                 ...createdTask,
                 _id: String(createdTask._id || createdTask.id),
                 title: createdTask.title || newTaskTitle,
                 columnId: extractColumnId(createdTask.columnId || newTaskColumnId),
                 priority: createdTask.priority || newTaskPriority,
-                estimateTime: createdTask.estimateTime ?? createdTask.estimate_time ?? estimateTimeValue,
-                estimate_time: createdTask.estimate_time ?? createdTask.estimateTime ?? estimateTimeValue,
+                estimateTime: finalEst,
+                estimate_time: finalEst,
+                point: finalEst,
+                points: finalEst,
                 week: createdTask.week ?? weekValue,
                 assignees: createdTask.assignees || [],
                 startDate: createdTask.startDate || new Date().toISOString()
@@ -1204,7 +1242,7 @@ export default function ProjectBoard({ projectId: propProjectId }) {
 
     const boardSummary = {
         tasks: tasks.length,
-        estimateTime: tasks.reduce((sum, t) => sum + (Number(t.estimateTime ?? t.estimate_time) || 0), 0),
+        points: tasks.reduce((sum, t) => sum + extractEstimateTime(t, 0), 0),
         completed: tasks.filter(t => t.status === 'completed').length,
     };
 
@@ -1266,14 +1304,14 @@ export default function ProjectBoard({ projectId: propProjectId }) {
                         {columns.map((column) => {
                             const columnTasks = getSortedTasksForColumn(column);
                             const isDoneColumn = (column.name || column.title || '').toLowerCase().includes('done');
-                            const columnEstimateTime = columnTasks.reduce((sum, t) => sum + (Number(t.estimateTime ?? t.estimate_time) || 0), 0);
+                            const columnPoints = columnTasks.reduce((sum, t) => sum + extractEstimateTime(t, 0), 0);
 
                             return (
                                 <div className={`board-column kind-${getColumnStatus(column.name || column.title).kind}`} key={column._id}>
                                     <BoardColumnHeader
                                         title={column.name || column.title}
                                         count={columnTasks.length}
-                                        estimateTime={columnEstimateTime}
+                                        points={columnPoints}
                                         canCreateTask={canCreateTask}
                                         onAddTask={() => handleOpenCreateModal(column._id, true)}
                                     />
@@ -1294,7 +1332,7 @@ export default function ProjectBoard({ projectId: propProjectId }) {
                                                 ) : (
                                                     columnTasks.map((task, index) => {
                                                         const assignees = Array.isArray(task.assignees) ? task.assignees : [];
-                                                        const taskEstimateTime = task.estimateTime ?? task.estimate_time ?? 0;
+                                                        const taskPoints = extractEstimateTime(task, 0);
                                                         const showNotAcceptBtn = (isDoneColumn && isLeader) || (isDoneColumn && isManager);
 
                                                         const isTaskAssignee = assignees.some(a => {
@@ -1326,7 +1364,7 @@ export default function ProjectBoard({ projectId: propProjectId }) {
                                                                         isDragging={snapshot.isDragging}
                                                                         canDrag={canDragThisTask}
                                                                         week={displayWeek}
-                                                                        estimateTime={taskEstimateTime}
+                                                                        points={taskPoints}
                                                                         deadlineStatus={status}
                                                                         assignees={assigneeList}
                                                                         onOpen={() => handleOpenTaskDrawer(task._id || task.id)}
@@ -1412,7 +1450,7 @@ export default function ProjectBoard({ projectId: propProjectId }) {
                                        className="input"
                                        placeholder="0"
                                        value={newTaskEstimateTime}
-                                       onChange={(e) => setNewTaskEstimateTime(e.target.value === '' ? '' : Number(e.target.value))}
+                                       onChange={(e) => setNewTaskEstimateTime(e.target.value)}
                                 />
                             </div>
 
